@@ -1,0 +1,125 @@
+name: sci-calculation
+description: Calculate operational carbon from CPU utilization using the Teads curve and then get operational and embodied carbon too
+initialize:
+  # outputs:
+  #   - csv
+  plugins:
+    interpolate:
+      method: Interpolation
+      path: builtin
+      global-config:
+        method: linear
+        x:
+          - 0
+          - 10
+          - 50
+          - 100
+        y:
+          - 0.12
+          - 0.32
+          - 0.75
+          - 1.02
+        input-parameter: cpu/utilization
+        output-parameter: cpu-factor
+    cpu-factor-to-wattage:
+      method: Multiply
+      path: builtin
+      global-config:
+        input-parameters:
+          - cpu-factor
+          - thermal-design-power
+        output-parameter: cpu-wattage
+    wattage-times-duration:
+      method: Multiply
+      path: builtin
+      global-config:
+        input-parameters:
+          - cpu-wattage
+          - duration
+        output-parameter: cpu-wattage-times-duration
+    wattage-to-energy-kwh:
+      method: Divide
+      path: builtin
+      global-config:
+        numerator: cpu-wattage-times-duration
+        denominator: 3600000
+        output: cpu-energy-raw
+    calculate-vcpu-ratio:
+      method: Divide
+      path: builtin
+      global-config:
+        numerator: vcpus-allocated
+        denominator: vcpus-total
+        output: vcpu-ratio
+    correct-cpu-energy-for-vcpu-ratio:
+      method: Divide
+      path: builtin
+      global-config:
+        numerator: cpu-energy-raw
+        denominator: vcpu-ratio
+        output: cpu/energy
+    sum-energy-components:
+      path: builtin
+      method: Sum
+      global-config:
+        input-parameters:
+          - cpu/energy
+          - network/energy
+        output-parameter: energy
+    embodied-carbon:
+      path: builtin
+      method: SciEmbodied
+    operational-carbon:
+      path: builtin
+      method: Multiply
+      global-config:
+        input-parameters:
+          - energy
+          - grid/carbon-intensity
+        output-parameter: carbon-operational
+    sum-carbon:
+      path: builtin
+      method: Sum
+      global-config:
+        input-parameters:
+          - carbon-operational
+          - carbon-embodied
+        output-parameter: carbon
+    sci:
+      path: builtin
+      method: Sci
+      global-config:
+        functional-unit: component
+tree:
+  children:
+    child:
+      pipeline:
+        - interpolate
+        - cpu-factor-to-wattage
+        - wattage-times-duration
+        - wattage-to-energy-kwh
+        - calculate-vcpu-ratio
+        - correct-cpu-energy-for-vcpu-ratio
+        - sum-energy-components
+        - embodied-carbon
+        - operational-carbon
+        - sum-carbon
+        - sci
+      config: null
+      defaults:
+        thermal-design-power: 65
+        vcpus-total: 8 # this is random rright now
+        vcpus-allocated: 2 # this is random right now
+        device/emissions-embodied: 1533.120 # gCO2eq
+        time-reserved: 3600 # 1hr in seconds
+        grid/carbon-intensity: 1 # this is random right now or zero 
+        device/expected-lifespan: 94608000 # 3 years in seconds
+        resources-reserved: vcpus-allocated
+        resources-total: vcpus-total
+        component: 1 # this is random right now - should probably be based  something important 
+      inputs:
+        - timestamp: 2024-07-14T00:00:00.000Z
+          duration: 21600
+          cpu/utilization: 0.76
+          cloud/region: uk-west # this is random right now
+          network/energy: 0.000001 # this is random right now
