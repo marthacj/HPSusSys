@@ -1,125 +1,147 @@
 name: sci-calculation
 description: Calculate operational carbon from CPU utilization using the Teads curve and then get operational and embodied carbon too
 initialize:
-  # outputs:
-  #   - csv
   plugins:
+    group-by:
+      path: 'builtin'
+      method: GroupBy
     interpolate:
       method: Interpolation
-      path: builtin
+      path: 'builtin'
       global-config:
         method: linear
-        x:
-          - 0
-          - 10
-          - 50
-          - 100
-        y:
-          - 0.12
-          - 0.32
-          - 0.75
-          - 1.02
-        input-parameter: cpu/utilization
-        output-parameter: cpu-factor
+        x: [0, 10, 50, 100]
+        y: [0.12, 0.32, 0.75, 1.02]
+        input-parameter: "cpu/utilization"
+        output-parameter: "cpu-factor"
     cpu-factor-to-wattage:
       method: Multiply
-      path: builtin
+      path: 'builtin'
       global-config:
-        input-parameters:
-          - cpu-factor
-          - thermal-design-power
-        output-parameter: cpu-wattage
+        input-parameters: ["cpu-factor", "cpu/thermal-design-power"]
+        output-parameter: "cpu-wattage"
     wattage-times-duration:
       method: Multiply
-      path: builtin
+      path: 'builtin'
       global-config:
-        input-parameters:
-          - cpu-wattage
-          - duration
-        output-parameter: cpu-wattage-times-duration
+        input-parameters: ["cpu-wattage", "duration"]
+        output-parameter: "cpu-wattage-times-duration"
     wattage-to-energy-kwh:
       method: Divide
-      path: builtin
+      path: 'builtin'
       global-config:
-        numerator: cpu-wattage-times-duration
-        denominator: 3600000
-        output: cpu-energy-raw
+        numerator: "cpu-wattage-times-duration"
+        denominator: 216000
+        output: "cpu-energy-raw"
     calculate-vcpu-ratio:
       method: Divide
-      path: builtin
+      path: 'builtin'
       global-config:
-        numerator: vcpus-allocated
-        denominator: vcpus-total
-        output: vcpu-ratio
+        numerator: "vcpus-allocated"
+        denominator: "vcpus-total"
+        output: "vcpu-ratio"
     correct-cpu-energy-for-vcpu-ratio:
       method: Divide
-      path: builtin
+      path: 'builtin'
       global-config:
-        numerator: cpu-energy-raw
-        denominator: vcpu-ratio
-        output: cpu/energy
+        numerator: "cpu-energy-raw"
+        denominator: "vcpu-ratio"
+        output: "cpu/energy"
+    energy-sent:
+      method: Multiply
+      path: 'builtin'
+      global-config:
+        input-parameters: ["total-MB-sent", "network-intensity"]
+        output-parameter: "energy-sent"
+    energy-received:
+      method: Multiply
+      path: 'builtin'
+      global-config:
+        input-parameters: ["total-MB-received", "network-intensity"]
+        output-parameter: "energy-received"
+    network-energy:
+      method: Sum
+      path: 'builtin'
+      global-config:
+        input-parameters: ["energy-sent", "energy-received"]
+        output-parameter: "network/energy"
     sum-energy-components:
-      path: builtin
+      path: 'builtin'
       method: Sum
       global-config:
-        input-parameters:
-          - cpu/energy
-          - network/energy
-        output-parameter: energy
-    embodied-carbon:
-      path: builtin
+        input-parameters: ["cpu/energy", "network/energy"]
+        output-parameter: "energy"
+    sci-embodied: # a model that calculates m from te, tir, el, rr and rtor
       method: SciEmbodied
+      path: 'builtin'
     operational-carbon:
-      path: builtin
+      path: 'builtin'
       method: Multiply
       global-config:
-        input-parameters:
-          - energy
-          - grid/carbon-intensity
-        output-parameter: carbon-operational
+        input-parameters: ["energy", "grid/carbon-intensity"]
+        output-parameter: "carbon-operational"
     sum-carbon:
-      path: builtin
+      path: 'builtin'
       method: Sum
       global-config:
-        input-parameters:
-          - carbon-operational
-          - carbon-embodied
-        output-parameter: carbon
+        input-parameters: ["carbon-operational", "carbon-embodied"]
+        output-parameter: "carbon"
     sci:
-      path: builtin
+      path: 'builtin'
       method: Sci
       global-config:
-        functional-unit: component
+        functional-unit: machine
 tree:
   children:
     child:
       pipeline:
+        - group-by
         - interpolate
         - cpu-factor-to-wattage
         - wattage-times-duration
         - wattage-to-energy-kwh
         - calculate-vcpu-ratio
         - correct-cpu-energy-for-vcpu-ratio
+        - energy-sent
+        - energy-received
+        - network-energy
         - sum-energy-components
-        - embodied-carbon
+        - sci-embodied
         - operational-carbon
         - sum-carbon
         - sci
-      config: null
+      config:
+        group-by:
+          group: ["instance-type"]
       defaults:
-        thermal-design-power: 65
-        vcpus-total: 8 # this is random rright now
-        vcpus-allocated: 2 # this is random right now
-        device/emissions-embodied: 1533.120 # gCO2eq
-        time-reserved: 3600 # 1hr in seconds
-        grid/carbon-intensity: 1 # this is random right now or zero 
-        device/expected-lifespan: 94608000 # 3 years in seconds
+        # device/emissions-embodied: 1533.120 # gCO2eq (random for now) and is the sum of Life Cycle Assessment (LCA) emissions for the component
+        time-reserved: 157788000 # the length of time the hardware is reserved for use by the software.
+        grid/carbon-intensity: 35 # this is the number for London (June 2024) 
+        device/expected-lifespan: 157788000 # 5 years in seconds == the length of time, in seconds, between a component's manufacture and its disposal
         resources-reserved: vcpus-allocated
         resources-total: vcpus-total
-        component: 1 # this is random right now - should probably be based  something important 
+        machine: 1 # this is for 1 machine right now as have taken the average for machines rather than data for all machines
+        duration: 216000
+        # cloud/region: uk-west # don't think i need this as not using cloud metadata?
+        network-intensity: 0.000124 # kWh/GB
       inputs:
         - timestamp: 2024-07-14T00:00:00.000Z
-          duration: 21600
+          device/emissions-embodied: 179.1 # gCO2eq = the sum of Life Cycle Assessment (LCA) emissions for the component
+          cpu/thermal-design-power: 90 #Watts
+          vcpus-total: 24 #Total VCPUs for Intel Core i9-12900K (8 P-cores and 8 E-cores with Hyper-Threading)
+          vcpus-allocated: 16 # need to check
           cpu/utilization: 0.76
-          cloud/region: uk-west # this is random right now
-          network/energy: 0.000001 # this is random right now
+          # network/energy: 0.000001 # this is random right now
+          total-MB-sent: 1499
+          total-MB-received: 5011
+          instance-type: c24
+        - timestamp: 2024-07-14T00:00:00.000Z
+          device/emissions-embodied: 306 # gCO2eq = the sum of Life Cycle Assessment (LCA) emissions for the component
+          cpu/thermal-design-power: 165 #Watts
+          vcpus-total: 28
+          vcpus-allocated: 24 # need to check
+          cpu/utilization: 0.13
+          # network/energy: 0.000001 # this is random right now
+          total-MB-sent: 851
+          total-MB-received: 2181
+          instance-type: c28
